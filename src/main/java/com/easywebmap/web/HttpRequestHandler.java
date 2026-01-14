@@ -1,6 +1,7 @@
 package com.easywebmap.web;
 
 import com.easywebmap.EasyWebMap;
+import com.easywebmap.web.handlers.BatchTileHandler;
 import com.easywebmap.web.handlers.PlayerHandler;
 import com.easywebmap.web.handlers.StaticHandler;
 import com.easywebmap.web.handlers.TileHandler;
@@ -10,6 +11,7 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.DefaultFullHttpResponse;
 import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.HttpHeaderNames;
+import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpVersion;
 import io.netty.handler.codec.http.websocketx.WebSocketServerHandshaker;
@@ -18,12 +20,14 @@ import io.netty.handler.codec.http.websocketx.WebSocketServerHandshakerFactory;
 public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
     private final EasyWebMap plugin;
     private final TileHandler tileHandler;
+    private final BatchTileHandler batchTileHandler;
     private final PlayerHandler playerHandler;
     private final StaticHandler staticHandler;
 
     public HttpRequestHandler(EasyWebMap plugin) {
         this.plugin = plugin;
         this.tileHandler = new TileHandler(plugin);
+        this.batchTileHandler = new BatchTileHandler(plugin, this.tileHandler.getTileManager());
         this.playerHandler = new PlayerHandler(plugin);
         this.staticHandler = new StaticHandler();
     }
@@ -37,6 +41,14 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
         String uri = req.uri();
         if (uri.equals("/ws") && this.isWebSocketUpgrade(req)) {
             this.handleWebSocketUpgrade(ctx, req);
+            return;
+        }
+        if (uri.equals("/api/tiles/batch")) {
+            if (req.method() == HttpMethod.OPTIONS) {
+                this.handleCorsPrelight(ctx);
+            } else {
+                this.batchTileHandler.handle(ctx, req);
+            }
             return;
         }
         if (uri.startsWith("/api/tiles/")) {
@@ -71,6 +83,16 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
     private void sendError(ChannelHandlerContext ctx, HttpResponseStatus status) {
         DefaultFullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status);
         response.headers().set(HttpHeaderNames.CONTENT_LENGTH, 0);
+        ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
+    }
+
+    private void handleCorsPrelight(ChannelHandlerContext ctx) {
+        DefaultFullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK);
+        response.headers()
+            .set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+            .set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_METHODS, "POST, OPTIONS")
+            .set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_HEADERS, "Content-Type")
+            .set(HttpHeaderNames.CONTENT_LENGTH, 0);
         ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
     }
 

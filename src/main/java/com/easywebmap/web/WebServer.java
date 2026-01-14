@@ -36,7 +36,7 @@ public class WebServer {
                         protected void initChannel(Channel ch) {
                             ch.pipeline()
                                     .addLast("codec", new HttpServerCodec())
-                                    .addLast("aggregator", new HttpObjectAggregator(65536))
+                                    .addLast("aggregator", new HttpObjectAggregator(262144))
                                     .addLast("handler", new HttpRequestHandler(plugin));
                         }
                     });
