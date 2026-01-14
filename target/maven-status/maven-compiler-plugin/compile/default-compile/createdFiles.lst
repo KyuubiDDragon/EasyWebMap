@@ -1,7 +1,9 @@
 com/easywebmap/web/WebServer.class
+com/easywebmap/web/handlers/BatchTileHandler.class
 com/easywebmap/tracker/PlayerTracker.class
 com/easywebmap/web/handlers/StaticHandler.class
 com/easywebmap/web/WebSocketHandler.class
+com/easywebmap/web/handlers/BatchTileHandler$TileCoord.class
 com/easywebmap/commands/EasyWebMapCommand.class
 com/easywebmap/map/TileCache$1.class
 com/easywebmap/web/handlers/PlayerHandler.class

@@ -1,5 +1,7 @@
 # EasyWebMap
 
+> **Built for the European Hytale survival server at `play.hyfyve.net`**
+
 A live web map for your Hytale server. View your world in a browser, track players in real-time, and easily integrate with your community website.
 
 ---

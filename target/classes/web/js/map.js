@@ -1,9 +1,169 @@
 (function() {
     'use strict';
 
+    // ============================================
+    // BatchTileLayer - Custom LeafletJS tile layer
+    // Batches multiple tile requests into single HTTP requests
+    // ============================================
+    L.TileLayer.Batch = L.TileLayer.extend({
+        options: {
+            batchDelay: 300,
+            maxBatchSize: 2000,
+            batchEndpoint: '/api/tiles/batch'
+        },
+
+        initialize: function(urlTemplate, options) {
+            L.TileLayer.prototype.initialize.call(this, urlTemplate, options);
+            this._pendingTiles = new Map();
+            this._batchTimer = null;
+            this._emptyTileUrl = null;
+            this._worldName = 'world';
+            this._isSending = false;
+            this._queuedWhileSending = new Map();
+        },
+
+        setWorld: function(worldName) {
+            this._worldName = worldName;
+        },
+
+        createTile: function(coords, done) {
+            const tile = document.createElement('img');
+            tile.alt = '';
+            tile.setAttribute('role', 'presentation');
+
+            const key = `0/${coords.x}/${coords.y}`;
+            this._queueTileRequest(key, coords, tile, done);
+
+            return tile;
+        },
+
+        _queueTileRequest: function(key, coords, tile, done) {
+            // If we're currently sending, queue for next batch
+            const targetMap = this._isSending ? this._queuedWhileSending : this._pendingTiles;
+
+            targetMap.set(key, {
+                tile: tile,
+                done: done,
+                coords: coords
+            });
+
+            if (this._batchTimer) {
+                clearTimeout(this._batchTimer);
+            }
+
+            // Only auto-send if not currently sending and we hit a huge limit
+            if (!this._isSending && this._pendingTiles.size >= this.options.maxBatchSize) {
+                this._sendBatch();
+            } else if (!this._isSending) {
+                this._batchTimer = setTimeout(() => this._sendBatch(), this.options.batchDelay);
+            }
+        },
+
+        _sendBatch: function() {
+            if (this._pendingTiles.size === 0) return;
+
+            this._isSending = true;
+            const allTiles = new Map(this._pendingTiles);
+            this._pendingTiles.clear();
+            this._batchTimer = null;
+
+            // Split into chunks of 200 tiles max
+            const CHUNK_SIZE = 200;
+            const chunks = [];
+            let currentChunk = new Map();
+
+            for (const [key, value] of allTiles) {
+                currentChunk.set(key, value);
+                if (currentChunk.size >= CHUNK_SIZE) {
+                    chunks.push(currentChunk);
+                    currentChunk = new Map();
+                }
+            }
+            if (currentChunk.size > 0) {
+                chunks.push(currentChunk);
+            }
+
+            console.log(`Sending ${allTiles.size} tiles in ${chunks.length} batch(es)`);
+
+            // Send all chunks in parallel
+            const chunkPromises = chunks.map(chunk => this._sendChunk(chunk));
+
+            Promise.all(chunkPromises).finally(() => {
+                this._isSending = false;
+                // Process any tiles that were queued while we were sending
+                if (this._queuedWhileSending.size > 0) {
+                    for (const [key, value] of this._queuedWhileSending) {
+                        this._pendingTiles.set(key, value);
+                    }
+                    this._queuedWhileSending.clear();
+                    // Schedule next batch
+                    this._batchTimer = setTimeout(() => this._sendBatch(), this.options.batchDelay);
+                }
+            });
+        },
+
+        _sendChunk: function(batch) {
+            const tiles = [];
+            for (const [key, request] of batch) {
+                const [z, x, y] = key.split('/').map(Number);
+                tiles.push({ z, x, y });
+            }
+
+            const requestBody = {
+                world: this._worldName,
+                tiles: tiles
+            };
+
+            return fetch(this.options.batchEndpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody)
+            })
+            .then(response => {
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return response.json();
+            })
+            .then(data => {
+                for (const [key, tileData] of Object.entries(data.tiles)) {
+                    const request = batch.get(key);
+                    if (!request) continue;
+
+                    if (tileData.empty) {
+                        this._setEmptyTile(request.tile, request.done);
+                    } else if (tileData.data) {
+                        request.tile.src = 'data:image/png;base64,' + tileData.data;
+                        request.tile.onload = () => request.done(null, request.tile);
+                        request.tile.onerror = () => request.done(new Error('Image load failed'), request.tile);
+                    } else if (tileData.error) {
+                        request.done(new Error(tileData.error), request.tile);
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Batch chunk failed:', error);
+                for (const [key, request] of batch) {
+                    request.done(error, request.tile);
+                }
+            });
+        },
+
+        _setEmptyTile: function(tile, done) {
+            if (!this._emptyTileUrl) {
+                this._emptyTileUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+            }
+            tile.src = this._emptyTileUrl;
+            done(null, tile);
+        }
+    });
+
+    L.tileLayer.batch = function(urlTemplate, options) {
+        return new L.TileLayer.Batch(urlTemplate, options);
+    };
+
     // Config - 1 tile = 1 chunk = 32 blocks
     const CHUNK_SIZE = 32;
     const TILE_SIZE = 256;
+    const SCALE = TILE_SIZE / CHUNK_SIZE;  // 8 - Leaflet units per block
 
     // State
     let map = null;
@@ -26,7 +186,7 @@
 
         map = L.map('map', {
             crs: L.CRS.Simple,
-            minZoom: -6,
+            minZoom: -4,
             maxZoom: 4,
             zoomSnap: 0.5,
             zoomDelta: 0.5,
@@ -34,15 +194,15 @@
             maxBoundsViscosity: 1.0
         });
 
-        // Start at origin (zoomed out)
-        map.setView([0, 0], -3);
+        // Start at origin
+        map.setView([0, 0], 0);
 
         updateTileLayer();
 
         map.on('mousemove', function(e) {
-            // In CRS.Simple with our setup: lat = -Z, lng = X
-            const x = Math.round(e.latlng.lng);
-            const z = Math.round(-e.latlng.lat);
+            // Convert Leaflet coords to world coords (divide by scale factor)
+            const x = Math.round(e.latlng.lng / SCALE);
+            const z = Math.round(-e.latlng.lat / SCALE);
             document.getElementById('coords-display').textContent = `X: ${x}, Z: ${z}`;
         });
 
@@ -54,25 +214,29 @@
             map.removeLayer(tileLayer);
         }
 
-        // Custom tile layer - use zoomOffset so tiles are always fetched at native zoom
-        tileLayer = L.tileLayer('/api/tiles/' + currentWorld + '/0/{x}/{y}.png', {
+        // Batch tile layer - reduces HTTP requests by batching multiple tiles per request
+        tileLayer = L.tileLayer.batch('/api/tiles/' + currentWorld + '/0/{x}/{y}.png', {
             tileSize: TILE_SIZE,
             minNativeZoom: 0,
             maxNativeZoom: 0,
-            minZoom: -6,
+            minZoom: -4,
             maxZoom: 4,
             noWrap: true,
             bounds: [[-100000, -100000], [100000, 100000]],
+            batchDelay: 300,
+            maxBatchSize: 2000,
+            batchEndpoint: '/api/tiles/batch'
         });
 
+        tileLayer.setWorld(currentWorld);
         tileLayer.addTo(map);
     }
 
     // Convert world coords to LatLng
     function worldToLatLng(x, z) {
         // X -> lng, Z -> -lat (north is up, Z increases south)
-        // Scale by chunk size since tiles represent chunks
-        return L.latLng(-z, x);
+        // Multiply by SCALE since Leaflet uses tile-pixel coords (256px per 32-block chunk)
+        return L.latLng(-z * SCALE, x * SCALE);
     }
 
     async function loadWorlds() {

@@ -5,6 +5,7 @@
 /Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/web/handlers/StaticHandler.java
 /Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/tracker/PlayerTracker.java
 /Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/web/WebServer.java
+/Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/web/handlers/BatchTileHandler.java
 /Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/map/PngEncoder.java
 /Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/web/WebSocketHandler.java
 /Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/web/handlers/PlayerHandler.java
