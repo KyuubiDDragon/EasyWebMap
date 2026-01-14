@@ -4,6 +4,7 @@
     // Config - 1 tile = 1 chunk = 32 blocks
     const CHUNK_SIZE = 32;
     const TILE_SIZE = 256;
+    const SCALE = TILE_SIZE / CHUNK_SIZE;  // 8 - Leaflet units per block
 
     // State
     let map = null;
@@ -40,9 +41,9 @@
         updateTileLayer();
 
         map.on('mousemove', function(e) {
-            // In CRS.Simple with our setup: lat = -Z, lng = X
-            const x = Math.round(e.latlng.lng);
-            const z = Math.round(-e.latlng.lat);
+            // Convert Leaflet coords to world coords (divide by scale factor)
+            const x = Math.round(e.latlng.lng / SCALE);
+            const z = Math.round(-e.latlng.lat / SCALE);
             document.getElementById('coords-display').textContent = `X: ${x}, Z: ${z}`;
         });
 
@@ -71,8 +72,8 @@
     // Convert world coords to LatLng
     function worldToLatLng(x, z) {
         // X -> lng, Z -> -lat (north is up, Z increases south)
-        // Scale by chunk size since tiles represent chunks
-        return L.latLng(-z, x);
+        // Multiply by SCALE since Leaflet uses tile-pixel coords (256px per 32-block chunk)
+        return L.latLng(-z * SCALE, x * SCALE);
     }
 
     async function loadWorlds() {
