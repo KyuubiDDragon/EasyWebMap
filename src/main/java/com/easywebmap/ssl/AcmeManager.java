@@ -104,7 +104,16 @@ public class AcmeManager {
             KeyPair domainKeyPair = loadOrCreateKeyPair(domainKeyFile);
 
             String acmeUrl = plugin.getConfig().isProductionAcme() ? PRODUCTION_URL : STAGING_URL;
-            Session session = new Session(acmeUrl);
+
+            // Set context classloader so ServiceLoader can find ACME providers in plugin JAR
+            ClassLoader originalClassLoader = Thread.currentThread().getContextClassLoader();
+            Thread.currentThread().setContextClassLoader(AcmeManager.class.getClassLoader());
+            Session session;
+            try {
+                session = new Session(acmeUrl);
+            } finally {
+                Thread.currentThread().setContextClassLoader(originalClassLoader);
+            }
 
             Account account = findOrRegisterAccount(session, accountKeyPair);
             System.out.println("[EasyWebMap] ACME account ready");

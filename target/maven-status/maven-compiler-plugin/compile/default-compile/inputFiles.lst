@@ -1,5 +1,6 @@
 /Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/web/HttpRequestHandler.java
 /Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/map/TileManager.java
+/Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/map/DiskTileCache.java
 /Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/commands/EasyWebMapCommand.java
 /Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/EasyWebMap.java
 /Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/web/handlers/StaticHandler.java
@@ -10,5 +11,6 @@
 /Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/web/WebSocketHandler.java
 /Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/web/handlers/PlayerHandler.java
 /Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/web/handlers/TileHandler.java
+/Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/ssl/AcmeManager.java
 /Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/config/MapConfig.java
 /Users/golemgrid/Documents/GitHub.nosync/EasyMap/src/main/java/com/easywebmap/map/TileCache.java
