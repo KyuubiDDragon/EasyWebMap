@@ -108,13 +108,14 @@
                         </goals>
                         <configuration>
                             <relocations>
-                                <relocation>
-                                    <pattern>org.shredzone.acme4j</pattern>
-                                    <shadedPattern>com.easywebmap.shaded.acme4j</shadedPattern>
-                                </relocation>
+                                <!-- Don't relocate acme4j - breaks ServiceLoader provider discovery -->
                                 <relocation>
                                     <pattern>org.bouncycastle</pattern>
                                     <shadedPattern>com.easywebmap.shaded.bouncycastle</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>org.jose4j</pattern>
+                                    <shadedPattern>com.easywebmap.shaded.jose4j</shadedPattern>
                                 </relocation>
                             </relocations>
                             <filters>
