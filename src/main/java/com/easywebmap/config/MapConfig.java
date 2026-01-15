@@ -2,9 +2,10 @@ package com.easywebmap.config;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
-import java.io.Reader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -21,17 +22,40 @@ public class MapConfig {
     }
 
     private void load() {
+        ConfigData defaults = new ConfigData();
+        boolean needsSave = false;
+
         if (Files.exists(this.configFile)) {
-            try (BufferedReader reader = Files.newBufferedReader(this.configFile)) {
-                this.data = GSON.fromJson(reader, ConfigData.class);
+            try {
+                String json = Files.readString(this.configFile);
+                JsonObject jsonObj = JsonParser.parseString(json).getAsJsonObject();
+
+                this.data = GSON.fromJson(jsonObj, ConfigData.class);
                 if (this.data == null) {
-                    this.data = new ConfigData();
+                    this.data = defaults;
+                    needsSave = true;
+                } else {
+                    // Apply defaults for missing fields
+                    if (this.data.enabledWorlds == null) {
+                        this.data.enabledWorlds = defaults.enabledWorlds;
+                        needsSave = true;
+                    }
+                    // Check if new fields are missing and apply defaults
+                    if (!jsonObj.has("renderExploredChunksOnly")) {
+                        this.data.renderExploredChunksOnly = defaults.renderExploredChunksOnly;
+                        needsSave = true;
+                    }
                 }
             } catch (Exception e) {
-                this.data = new ConfigData();
+                this.data = defaults;
+                needsSave = true;
             }
         } else {
-            this.data = new ConfigData();
+            this.data = defaults;
+            needsSave = true;
+        }
+
+        if (needsSave) {
             this.save();
         }
     }
@@ -79,6 +103,10 @@ public class MapConfig {
         return this.data.enabledWorlds.isEmpty() || this.data.enabledWorlds.contains(worldName);
     }
 
+    public boolean isRenderExploredChunksOnly() {
+        return this.data.renderExploredChunksOnly;
+    }
+
     private static class ConfigData {
         int httpPort = 8080;
         int updateIntervalMs = 1000;
@@ -86,5 +114,6 @@ public class MapConfig {
         List<String> enabledWorlds = new ArrayList<>();
         int tileSize = 256;
         int maxZoom = 4;
+        boolean renderExploredChunksOnly = true;
     }
 }

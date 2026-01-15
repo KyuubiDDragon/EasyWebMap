@@ -1,9 +1,13 @@
 package com.easywebmap.map;
 
 import com.easywebmap.EasyWebMap;
+import com.hypixel.hytale.math.util.ChunkUtil;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.hypixel.hytale.server.core.universe.world.World;
+import com.hypixel.hytale.server.core.universe.world.storage.ChunkStore;
+import com.hypixel.hytale.server.core.universe.world.storage.IChunkLoader;
 import com.hypixel.hytale.server.core.universe.world.worldmap.WorldMapManager;
+import it.unimi.dsi.fastutil.longs.LongSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -44,6 +48,14 @@ public class TileManager {
         if (world == null) {
             return CompletableFuture.completedFuture(PngEncoder.encodeEmpty(this.plugin.getConfig().getTileSize()));
         }
+
+        // Check if we should only render explored chunks
+        if (this.plugin.getConfig().isRenderExploredChunksOnly()) {
+            if (!this.isChunkExplored(world, tileX, tileZ)) {
+                return CompletableFuture.completedFuture(PngEncoder.encodeEmpty(this.plugin.getConfig().getTileSize()));
+            }
+        }
+
         WorldMapManager mapManager = world.getWorldMapManager();
         return mapManager.getImageAsync(tileX, tileZ)
                 .thenApply(mapImage -> {
@@ -56,6 +68,22 @@ public class TileManager {
                     System.err.println("[EasyWebMap] Failed to generate tile: " + ex.getMessage());
                     return PngEncoder.encodeEmpty(this.plugin.getConfig().getTileSize());
                 });
+    }
+
+    private boolean isChunkExplored(World world, int chunkX, int chunkZ) {
+        try {
+            ChunkStore chunkStore = world.getChunkStore();
+            IChunkLoader loader = chunkStore.getLoader();
+            if (loader == null) {
+                return false;
+            }
+            LongSet existingChunks = loader.getIndexes();
+            long chunkIndex = ChunkUtil.indexChunk(chunkX, chunkZ);
+            return existingChunks.contains(chunkIndex);
+        } catch (Exception e) {
+            // If we can't check, allow rendering (fail open for usability)
+            return true;
+        }
     }
 
     public void clearCache() {

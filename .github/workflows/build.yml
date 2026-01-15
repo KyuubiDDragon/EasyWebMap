@@ -82,6 +82,7 @@ jobs:
             | Player Tracking | Watch players move around with direction arrows |
             | Player List | Click any player name to jump to their location |
             | Multi-World | Switch between worlds with a dropdown |
+            | Explored-Only Rendering | Only renders explored chunks by default (prevents abuse) |
 
             ---
 

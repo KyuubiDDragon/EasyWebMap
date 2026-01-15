@@ -93,7 +93,8 @@ Config file: `mods/cryptobench_EasyWebMap/config.json`
   "tileCacheSize": 500,
   "enabledWorlds": [],
   "tileSize": 256,
-  "maxZoom": 4
+  "maxZoom": 4,
+  "renderExploredChunksOnly": true
 }
 ```
 
@@ -103,6 +104,7 @@ Config file: `mods/cryptobench_EasyWebMap/config.json`
 | `updateIntervalMs` | 1000 | Player update frequency (ms) |
 | `tileCacheSize` | 500 | Max tiles to cache in memory |
 | `enabledWorlds` | [] | World whitelist (empty = all) |
+| `renderExploredChunksOnly` | true | Only render chunks that players have explored (prevents lag/abuse) |
 
 ---
 
@@ -133,6 +135,12 @@ Yes, add specific world names to `enabledWorlds` in config. Empty array shows al
 
 **Q: How do I put it behind a reverse proxy?**
 Point nginx/Apache to port 8080. WebSocket path is `/ws`.
+
+**Q: Why do some areas show as empty on the map?**
+By default, only explored chunks are rendered (`renderExploredChunksOnly: true`). This prevents server lag and abuse from users scrolling to unexplored areas. Set it to `false` in config if you want to render all chunks (not recommended for public servers).
+
+**Q: Can users abuse the map to lag my server?**
+Not with default settings. The `renderExploredChunksOnly` option (enabled by default) prevents rendering unexplored chunks, so scrolling around won't trigger chunk generation.
 
 ---
 
