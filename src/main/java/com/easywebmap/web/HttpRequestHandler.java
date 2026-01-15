@@ -27,7 +27,7 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
     public HttpRequestHandler(EasyWebMap plugin) {
         this.plugin = plugin;
         this.tileHandler = new TileHandler(plugin);
-        this.batchTileHandler = new BatchTileHandler(plugin, this.tileHandler.getTileManager());
+        this.batchTileHandler = new BatchTileHandler(plugin, plugin.getTileManager());
         this.playerHandler = new PlayerHandler(plugin);
         this.staticHandler = new StaticHandler();
     }

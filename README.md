@@ -74,9 +74,10 @@ ws.onmessage = (e) => {
 
 | Command | What it does |
 |---------|--------------|
-| `/easywebmap status` | Show connection count and server info |
+| `/easywebmap status` | Show connection count, cache info, and server status |
 | `/easywebmap reload` | Reload the config file |
-| `/easywebmap clearcache` | Clear cached map tiles |
+| `/easywebmap clearcache` | Clear all caches (memory + disk) |
+| `/easywebmap pregenerate <radius>` | Pre-generate tiles around your position |
 
 All commands require the `easywebmap.admin` permission.
 
@@ -90,11 +91,15 @@ Config file: `mods/cryptobench_EasyWebMap/config.json`
 {
   "httpPort": 8080,
   "updateIntervalMs": 1000,
-  "tileCacheSize": 500,
+  "tileCacheSize": 20000,
   "enabledWorlds": [],
   "tileSize": 256,
   "maxZoom": 4,
-  "renderExploredChunksOnly": true
+  "renderExploredChunksOnly": true,
+  "chunkIndexCacheMs": 30000,
+  "useDiskCache": true,
+  "tileRefreshRadius": 5,
+  "tileRefreshIntervalMs": 60000
 }
 ```
 
@@ -102,9 +107,68 @@ Config file: `mods/cryptobench_EasyWebMap/config.json`
 |---------|---------|--------------|
 | `httpPort` | 8080 | Web server port |
 | `updateIntervalMs` | 1000 | Player update frequency (ms) |
-| `tileCacheSize` | 500 | Max tiles to cache in memory |
+| `tileCacheSize` | 20000 | Max tiles to cache in memory (~200MB at 10KB/tile) |
 | `enabledWorlds` | [] | World whitelist (empty = all) |
 | `renderExploredChunksOnly` | true | Only render chunks that players have explored (prevents lag/abuse) |
+| `chunkIndexCacheMs` | 30000 | How long to cache the explored chunks index (ms) |
+| `useDiskCache` | true | Save tiles to disk for persistence across restarts |
+| `tileRefreshRadius` | 5 | Player must be within N chunks for tile to refresh |
+| `tileRefreshIntervalMs` | 60000 | Minimum time between tile refreshes (ms) |
+
+### Chunk Index Cache (`chunkIndexCacheMs`)
+
+When `renderExploredChunksOnly` is enabled, the plugin needs to check which chunks have been explored. This requires reading an index from disk. To avoid reading disk on every tile request, the index is cached.
+
+**Trade-off:**
+- **Lower value** (e.g., 5000ms): New exploration shows on map faster, but more disk reads
+- **Higher value** (e.g., 60000ms): Fewer disk reads, but newly explored areas take longer to appear
+
+**What this means in practice:**
+
+| Cache Time | Disk Reads | Map Freshness |
+|------------|------------|---------------|
+| 5000 (5s) | ~12/min per world | New chunks visible within 5 seconds |
+| 30000 (30s) | ~2/min per world | New chunks visible within 30 seconds |
+| 60000 (1min) | ~1/min per world | New chunks visible within 1 minute |
+
+**Example scenario:** A player explores a new area. With `chunkIndexCacheMs: 30000`, the new chunks won't appear on the web map until the cache expires (up to 30 seconds). The tile will show as empty until then.
+
+**Note:** This only affects *newly* explored chunks. Already-explored chunks are always visible. The `/easywebmap clearcache` command clears this cache immediately if needed
+
+### Disk Cache & Smart Refresh
+
+The plugin uses a smart caching system to minimize server load:
+
+1. **Disk Cache**: Tiles are saved as PNG files to `mods/cryptobench_EasyWebMap/tilecache/`. These persist across server restarts, so the first visitor after a restart doesn't trigger mass tile generation.
+
+2. **Smart Refresh**: Tiles only regenerate when:
+   - The tile is older than `tileRefreshIntervalMs` (default: 60 seconds), AND
+   - A player is within `tileRefreshRadius` chunks (default: 5 chunks)
+
+**Why this matters:**
+- If no players are nearby, terrain can't have changed, so the cached tile is always valid
+- This means 99% of tile requests serve instantly from cache with zero server load
+- Only actively played areas regenerate, and only once per minute at most
+
+**Flow:**
+```
+Request for tile → Memory cache? → Serve instantly
+                          ↓ no
+                   Disk cache? → Fresh enough? → Serve from disk
+                          ↓ no         ↓ old
+                   Generate new   Players nearby? → No: Serve stale (terrain unchanged)
+                                         ↓ yes
+                                  Regenerate tile
+```
+
+### Pre-generation
+
+Use `/easywebmap pregenerate <radius>` to warm the cache:
+- Generates tiles in a square around your position
+- Skips already-cached tiles and unexplored chunks
+- Runs in background with 50ms delay between tiles to avoid lag
+- Example: `/easywebmap pregenerate 50` generates up to 10,201 tiles
+- No max limit - use what you need (large values will take time)
 
 ---
 

@@ -1,7 +1,6 @@
 package com.easywebmap.web.handlers;
 
 import com.easywebmap.EasyWebMap;
-import com.easywebmap.map.TileManager;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
@@ -17,11 +16,9 @@ import java.util.regex.Pattern;
 public class TileHandler {
     private static final Pattern TILE_PATTERN = Pattern.compile("/api/tiles/([^/]+)/(-?\\d+)/(-?\\d+)/(-?\\d+)\\.png");
     private final EasyWebMap plugin;
-    private final TileManager tileManager;
 
     public TileHandler(EasyWebMap plugin) {
         this.plugin = plugin;
-        this.tileManager = new TileManager(plugin);
     }
 
     public void handle(ChannelHandlerContext ctx, FullHttpRequest req) {
@@ -42,7 +39,7 @@ public class TileHandler {
             this.sendError(ctx, HttpResponseStatus.FORBIDDEN);
             return;
         }
-        this.tileManager.getTile(worldName, zoom, x, z).thenAccept(data -> {
+        this.plugin.getTileManager().getTile(worldName, zoom, x, z).thenAccept(data -> {
             if (!ctx.channel().isActive()) {
                 return;
             }
@@ -58,10 +55,6 @@ public class TileHandler {
                     .set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN, "*");
             ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
         });
-    }
-
-    public TileManager getTileManager() {
-        return this.tileManager;
     }
 
     private void sendError(ChannelHandlerContext ctx, HttpResponseStatus status) {

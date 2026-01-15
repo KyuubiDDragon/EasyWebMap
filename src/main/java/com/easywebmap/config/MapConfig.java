@@ -45,6 +45,22 @@ public class MapConfig {
                         this.data.renderExploredChunksOnly = defaults.renderExploredChunksOnly;
                         needsSave = true;
                     }
+                    if (!jsonObj.has("chunkIndexCacheMs")) {
+                        this.data.chunkIndexCacheMs = defaults.chunkIndexCacheMs;
+                        needsSave = true;
+                    }
+                    if (!jsonObj.has("tileRefreshRadius")) {
+                        this.data.tileRefreshRadius = defaults.tileRefreshRadius;
+                        needsSave = true;
+                    }
+                    if (!jsonObj.has("tileRefreshIntervalMs")) {
+                        this.data.tileRefreshIntervalMs = defaults.tileRefreshIntervalMs;
+                        needsSave = true;
+                    }
+                    if (!jsonObj.has("useDiskCache")) {
+                        this.data.useDiskCache = defaults.useDiskCache;
+                        needsSave = true;
+                    }
                 }
             } catch (Exception e) {
                 this.data = defaults;
@@ -107,13 +123,33 @@ public class MapConfig {
         return this.data.renderExploredChunksOnly;
     }
 
+    public long getChunkIndexCacheMs() {
+        return this.data.chunkIndexCacheMs;
+    }
+
+    public int getTileRefreshRadius() {
+        return this.data.tileRefreshRadius;
+    }
+
+    public long getTileRefreshIntervalMs() {
+        return this.data.tileRefreshIntervalMs;
+    }
+
+    public boolean isUseDiskCache() {
+        return this.data.useDiskCache;
+    }
+
     private static class ConfigData {
         int httpPort = 8080;
         int updateIntervalMs = 1000;
-        int tileCacheSize = 500;
+        int tileCacheSize = 20000;
         List<String> enabledWorlds = new ArrayList<>();
         int tileSize = 256;
         int maxZoom = 4;
         boolean renderExploredChunksOnly = true;
+        long chunkIndexCacheMs = 30000;
+        int tileRefreshRadius = 5;
+        long tileRefreshIntervalMs = 60000;
+        boolean useDiskCache = true;
     }
 }
