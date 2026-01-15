@@ -74,12 +74,125 @@ ws.onmessage = (e) => {
 
 | Command | What it does |
 |---------|--------------|
-| `/easywebmap status` | Show connection count, cache info, and server status |
+| `/easywebmap status` | Show connection count, cache info, SSL status, and server status |
 | `/easywebmap reload` | Reload the config file |
 | `/easywebmap clearcache` | Clear all caches (memory + disk) |
 | `/easywebmap pregenerate <radius>` | Pre-generate tiles around your position |
+| `/easywebmap renewssl` | Force immediate SSL certificate renewal |
 
 All commands require the `easywebmap.admin` permission.
+
+---
+
+## HTTPS with Let's Encrypt (Free SSL)
+
+EasyWebMap can automatically obtain and renew SSL certificates from Let's Encrypt. No manual certificate management required!
+
+### Quick Setup
+
+1. **Point your domain to your server** - Make sure `map.yourserver.com` (or whatever domain you choose) points to your server's IP address.
+
+2. **Open port 80** - Let's Encrypt needs to verify you own the domain by connecting to port 80. Make sure your firewall allows this.
+
+3. **Add to your config.json:**
+```json
+{
+  "enableHttps": true,
+  "httpsPort": 8443,
+  "domain": "map.yourserver.com",
+  "acmeEmail": "admin@yourserver.com"
+}
+```
+
+4. **Restart your server** - The plugin will automatically:
+   - Register with Let's Encrypt
+   - Request a certificate for your domain
+   - Start serving HTTPS on port 8443
+
+That's it! Your map is now available at `https://map.yourserver.com:8443`
+
+### How It Works
+
+When you enable HTTPS, the plugin:
+
+1. Creates an account with Let's Encrypt (stored in `ssl/account.key`)
+2. Requests a certificate for your domain
+3. Responds to Let's Encrypt's HTTP-01 challenge on port 80
+4. Stores the certificate in `ssl/domain.crt` and key in `ssl/domain.key`
+5. Starts the HTTPS server
+6. Checks daily if the certificate needs renewal (renews 30 days before expiry)
+7. Automatically reloads the certificate without restarting
+
+### HTTPS Configuration Options
+
+| Setting | Default | What it does |
+|---------|---------|--------------|
+| `enableHttps` | false | Enable/disable HTTPS |
+| `httpsPort` | 8443 | Port for HTTPS (use 443 if you have permission) |
+| `domain` | "" | Your domain name (required for HTTPS) |
+| `acmeEmail` | "" | Email for Let's Encrypt notifications (optional but recommended) |
+| `useProductionAcme` | true | Set to `false` for testing (uses staging server, avoids rate limits) |
+
+### SSL Commands
+
+| Command | What it does |
+|---------|--------------|
+| `/easywebmap status` | Shows HTTPS status, domain, and certificate expiry date |
+| `/easywebmap renewssl` | Force immediate certificate renewal |
+
+### Requirements
+
+- **Domain name** - You need a domain pointing to your server (IP addresses won't work with Let's Encrypt)
+- **Port 80 accessible** - Let's Encrypt validates domain ownership via HTTP on port 80
+- **Port 8443 (or 443) accessible** - For serving HTTPS traffic
+
+### Testing First
+
+Before going live, test with Let's Encrypt staging server to avoid rate limits:
+
+```json
+{
+  "enableHttps": true,
+  "domain": "map.yourserver.com",
+  "useProductionAcme": false
+}
+```
+
+The staging server issues test certificates that browsers won't trust, but it proves everything works. Once verified, set `useProductionAcme` back to `true` and restart.
+
+### Using Port 443 (Standard HTTPS)
+
+By default, HTTPS runs on port 8443. If you want to use the standard HTTPS port (443):
+
+```json
+{
+  "httpsPort": 443
+}
+```
+
+Note: Binding to port 443 may require running the server as root/administrator, or using a reverse proxy.
+
+### Behind a Reverse Proxy
+
+If you're using nginx or Apache as a reverse proxy, you can let the proxy handle SSL and keep EasyWebMap on HTTP only. Example nginx config:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name map.yourserver.com;
+
+    ssl_certificate /etc/letsencrypt/live/map.yourserver.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/map.yourserver.com/privkey.pem;
+
+    location / {
+        proxy_pass http://localhost:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+    }
+}
+```
 
 ---
 
@@ -99,7 +212,12 @@ Config file: `mods/cryptobench_EasyWebMap/config.json`
   "chunkIndexCacheMs": 30000,
   "useDiskCache": true,
   "tileRefreshRadius": 5,
-  "tileRefreshIntervalMs": 60000
+  "tileRefreshIntervalMs": 60000,
+  "enableHttps": false,
+  "httpsPort": 8443,
+  "domain": "",
+  "acmeEmail": "",
+  "useProductionAcme": true
 }
 ```
 
@@ -114,6 +232,11 @@ Config file: `mods/cryptobench_EasyWebMap/config.json`
 | `useDiskCache` | true | Save tiles to disk for persistence across restarts |
 | `tileRefreshRadius` | 5 | Player must be within N chunks for tile to refresh |
 | `tileRefreshIntervalMs` | 60000 | Minimum time between tile refreshes (ms) |
+| `enableHttps` | false | Enable automatic HTTPS with Let's Encrypt |
+| `httpsPort` | 8443 | Port for HTTPS connections |
+| `domain` | "" | Your domain name for SSL certificate |
+| `acmeEmail` | "" | Email for Let's Encrypt notifications |
+| `useProductionAcme` | true | Use production Let's Encrypt (false = staging for testing) |
 
 ### Chunk Index Cache (`chunkIndexCacheMs`)
 
@@ -205,6 +328,25 @@ By default, only explored chunks are rendered (`renderExploredChunksOnly: true`)
 
 **Q: Can users abuse the map to lag my server?**
 Not with default settings. The `renderExploredChunksOnly` option (enabled by default) prevents rendering unexplored chunks, so scrolling around won't trigger chunk generation.
+
+**Q: How do I enable HTTPS?**
+Add `"enableHttps": true` and `"domain": "your-domain.com"` to your config. The plugin automatically gets a free SSL certificate from Let's Encrypt. See the HTTPS section above for details.
+
+**Q: Why isn't my SSL certificate working?**
+Common issues:
+1. Domain doesn't point to your server's IP
+2. Port 80 is blocked by firewall (Let's Encrypt needs this for verification)
+3. Another service is using port 80
+Check the server logs for specific error messages.
+
+**Q: Do I need to renew the certificate manually?**
+No! The plugin automatically checks daily and renews certificates 30 days before they expire. You never need to touch it.
+
+**Q: Can I use my own SSL certificate instead of Let's Encrypt?**
+Currently, only automatic Let's Encrypt certificates are supported. If you need to use your own certificate, put EasyWebMap behind a reverse proxy (nginx/Apache) that handles SSL.
+
+**Q: What if Let's Encrypt is down or rate-limited?**
+The plugin will keep serving HTTP normally. It retries certificate requests and logs any errors. Once Let's Encrypt is available again, certificates will be obtained automatically.
 
 ---
 

@@ -61,6 +61,27 @@ public class MapConfig {
                         this.data.useDiskCache = defaults.useDiskCache;
                         needsSave = true;
                     }
+                    // SSL configuration migration
+                    if (!jsonObj.has("enableHttps")) {
+                        this.data.enableHttps = defaults.enableHttps;
+                        needsSave = true;
+                    }
+                    if (!jsonObj.has("httpsPort")) {
+                        this.data.httpsPort = defaults.httpsPort;
+                        needsSave = true;
+                    }
+                    if (!jsonObj.has("domain")) {
+                        this.data.domain = defaults.domain;
+                        needsSave = true;
+                    }
+                    if (!jsonObj.has("acmeEmail")) {
+                        this.data.acmeEmail = defaults.acmeEmail;
+                        needsSave = true;
+                    }
+                    if (!jsonObj.has("useProductionAcme")) {
+                        this.data.useProductionAcme = defaults.useProductionAcme;
+                        needsSave = true;
+                    }
                 }
             } catch (Exception e) {
                 this.data = defaults;
@@ -139,6 +160,26 @@ public class MapConfig {
         return this.data.useDiskCache;
     }
 
+    public boolean isHttpsEnabled() {
+        return this.data.enableHttps;
+    }
+
+    public int getHttpsPort() {
+        return this.data.httpsPort;
+    }
+
+    public String getDomain() {
+        return this.data.domain;
+    }
+
+    public String getAcmeEmail() {
+        return this.data.acmeEmail;
+    }
+
+    public boolean isProductionAcme() {
+        return this.data.useProductionAcme;
+    }
+
     private static class ConfigData {
         int httpPort = 8080;
         int updateIntervalMs = 1000;
@@ -151,5 +192,12 @@ public class MapConfig {
         int tileRefreshRadius = 5;
         long tileRefreshIntervalMs = 60000;
         boolean useDiskCache = true;
+
+        // SSL/HTTPS configuration
+        boolean enableHttps = false;
+        int httpsPort = 8443;
+        String domain = "";
+        String acmeEmail = "";
+        boolean useProductionAcme = true;
     }
 }

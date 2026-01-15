@@ -14,19 +14,22 @@ import com.hypixel.hytale.server.core.universe.world.storage.EntityStore;
 import com.hypixel.hytale.math.vector.Transform;
 import com.hypixel.hytale.math.vector.Vector3d;
 import java.awt.Color;
+import java.time.Duration;
+import java.time.Instant;
 
 public class EasyWebMapCommand extends AbstractPlayerCommand {
     private static final Color GREEN = new Color(85, 255, 85);
     private static final Color YELLOW = new Color(255, 255, 85);
     private static final Color RED = new Color(255, 85, 85);
     private static final Color GRAY = new Color(170, 170, 170);
+    private static final Color AQUA = new Color(85, 255, 255);
     private final EasyWebMap plugin;
     private final RequiredArg<String> subcommand;
 
     public EasyWebMapCommand(EasyWebMap plugin) {
         super("easywebmap", "EasyWebMap admin commands");
         this.plugin = plugin;
-        this.subcommand = this.withRequiredArg("action", "status|reload|clearcache|pregenerate", ArgTypes.STRING);
+        this.subcommand = this.withRequiredArg("action", "status|reload|clearcache|pregenerate|renewssl", ArgTypes.STRING);
         this.requirePermission("easywebmap.admin");
     }
 
@@ -41,22 +44,48 @@ public class EasyWebMapCommand extends AbstractPlayerCommand {
             case "reload" -> this.reloadConfig(playerData);
             case "clearcache" -> this.clearCache(playerData);
             case "pregenerate" -> this.pregenerate(playerData, world, parts);
+            case "renewssl" -> this.renewSsl(playerData);
             default -> this.showHelp(playerData);
         }
     }
 
     private void showStatus(PlayerRef player) {
         int connections = this.plugin.getPlayerTracker().getConnectionCount();
-        int port = this.plugin.getConfig().getHttpPort();
+        int httpPort = this.plugin.getConfig().getHttpPort();
         int memoryCacheSize = this.plugin.getTileManager().getMemoryCacheSize();
         boolean diskCacheEnabled = this.plugin.getConfig().isUseDiskCache();
+        boolean httpsEnabled = this.plugin.getConfig().isHttpsEnabled();
 
         player.sendMessage(Message.raw("=== EasyWebMap Status ===").color(YELLOW));
-        player.sendMessage(Message.raw("Web server: Running on port " + port).color(GREEN));
+        player.sendMessage(Message.raw("HTTP server: Running on port " + httpPort).color(GREEN));
         player.sendMessage(Message.raw("WebSocket connections: " + connections).color(GREEN));
         player.sendMessage(Message.raw("Memory cache: " + memoryCacheSize + " tiles").color(GREEN));
         player.sendMessage(Message.raw("Disk cache: " + (diskCacheEnabled ? "Enabled" : "Disabled")).color(GREEN));
-        player.sendMessage(Message.raw("URL: http://localhost:" + port).color(GREEN));
+
+        if (httpsEnabled) {
+            int httpsPort = this.plugin.getConfig().getHttpsPort();
+            boolean httpsRunning = this.plugin.getWebServer().isHttpsRunning();
+
+            if (httpsRunning && this.plugin.getAcmeManager() != null) {
+                player.sendMessage(Message.raw("HTTPS server: Running on port " + httpsPort).color(GREEN));
+                String domain = this.plugin.getConfig().getDomain();
+                player.sendMessage(Message.raw("Domain: " + domain).color(AQUA));
+
+                Instant expiry = this.plugin.getAcmeManager().getCertificateExpiry();
+                if (expiry != null) {
+                    long daysRemaining = Duration.between(Instant.now(), expiry).toDays();
+                    Color expiryColor = daysRemaining > 30 ? GREEN : (daysRemaining > 7 ? YELLOW : RED);
+                    player.sendMessage(Message.raw("Certificate expires in: " + daysRemaining + " days").color(expiryColor));
+                }
+                player.sendMessage(Message.raw("URL: https://" + domain + ":" + httpsPort).color(AQUA));
+            } else {
+                player.sendMessage(Message.raw("HTTPS server: Not running").color(RED));
+            }
+        } else {
+            player.sendMessage(Message.raw("HTTPS: Disabled").color(GRAY));
+        }
+
+        player.sendMessage(Message.raw("HTTP URL: http://localhost:" + httpPort).color(GREEN));
     }
 
     private void reloadConfig(PlayerRef player) {
@@ -105,11 +134,29 @@ public class EasyWebMapCommand extends AbstractPlayerCommand {
             });
     }
 
+    private void renewSsl(PlayerRef player) {
+        if (this.plugin.getAcmeManager() == null) {
+            player.sendMessage(Message.raw("HTTPS is not enabled. Enable it in config.json").color(RED));
+            return;
+        }
+
+        player.sendMessage(Message.raw("Requesting SSL certificate renewal...").color(YELLOW));
+
+        this.plugin.getAcmeManager().renewNow().thenAccept(success -> {
+            if (success) {
+                player.sendMessage(Message.raw("SSL certificate renewed successfully!").color(GREEN));
+            } else {
+                player.sendMessage(Message.raw("SSL certificate renewal failed. Check server logs.").color(RED));
+            }
+        });
+    }
+
     private void showHelp(PlayerRef player) {
         player.sendMessage(Message.raw("=== EasyWebMap Commands ===").color(YELLOW));
         player.sendMessage(Message.raw("/easywebmap status - Show server status").color(GRAY));
         player.sendMessage(Message.raw("/easywebmap reload - Reload configuration").color(GRAY));
         player.sendMessage(Message.raw("/easywebmap clearcache - Clear all tile caches").color(GRAY));
         player.sendMessage(Message.raw("/easywebmap pregenerate <radius> - Pre-generate tiles around you").color(GRAY));
+        player.sendMessage(Message.raw("/easywebmap renewssl - Force SSL certificate renewal").color(GRAY));
     }
 }

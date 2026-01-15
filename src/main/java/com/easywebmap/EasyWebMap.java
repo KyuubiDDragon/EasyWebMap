@@ -3,6 +3,7 @@ package com.easywebmap;
 import com.easywebmap.commands.EasyWebMapCommand;
 import com.easywebmap.config.MapConfig;
 import com.easywebmap.map.TileManager;
+import com.easywebmap.ssl.AcmeManager;
 import com.easywebmap.tracker.PlayerTracker;
 import com.easywebmap.web.WebServer;
 import com.hypixel.hytale.server.core.command.system.AbstractCommand;
@@ -14,6 +15,7 @@ public class EasyWebMap extends JavaPlugin {
     private TileManager tileManager;
     private WebServer webServer;
     private PlayerTracker playerTracker;
+    private AcmeManager acmeManager;
 
     public EasyWebMap(JavaPluginInit init) {
         super(init);
@@ -25,6 +27,11 @@ public class EasyWebMap extends JavaPlugin {
         this.tileManager = new TileManager(this);
         this.webServer = new WebServer(this);
         this.playerTracker = new PlayerTracker(this);
+
+        if (this.config.isHttpsEnabled()) {
+            this.acmeManager = new AcmeManager(this);
+        }
+
         this.getCommandRegistry().registerCommand((AbstractCommand) new EasyWebMapCommand(this));
     }
 
@@ -32,11 +39,26 @@ public class EasyWebMap extends JavaPlugin {
     public void start() {
         this.webServer.start();
         this.playerTracker.start();
-        System.out.println("[EasyWebMap] Web server started on port " + this.config.getHttpPort());
+        System.out.println("[EasyWebMap] HTTP server started on port " + this.config.getHttpPort());
+
+        if (this.config.isHttpsEnabled() && this.acmeManager != null) {
+            this.acmeManager.initialize().thenAccept(success -> {
+                if (success) {
+                    this.webServer.startHttps(this.acmeManager.getSslContext());
+                    this.acmeManager.startRenewalScheduler();
+                    System.out.println("[EasyWebMap] HTTPS enabled on port " + this.config.getHttpsPort());
+                } else {
+                    System.err.println("[EasyWebMap] HTTPS initialization failed, running HTTP only");
+                }
+            });
+        }
     }
 
     @Override
     public void shutdown() {
+        if (this.acmeManager != null) {
+            this.acmeManager.shutdown();
+        }
         if (this.playerTracker != null) {
             this.playerTracker.shutdown();
         }
@@ -60,5 +82,13 @@ public class EasyWebMap extends JavaPlugin {
 
     public TileManager getTileManager() {
         return this.tileManager;
+    }
+
+    public AcmeManager getAcmeManager() {
+        return this.acmeManager;
+    }
+
+    public java.nio.file.Path getDataDirectory() {
+        return super.getDataDirectory();
     }
 }

@@ -18,14 +18,22 @@ import io.netty.handler.codec.http.websocketx.WebSocketServerHandshaker;
 import io.netty.handler.codec.http.websocketx.WebSocketServerHandshakerFactory;
 
 public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
+    private static final String ACME_CHALLENGE_PATH = "/.well-known/acme-challenge/";
+
     private final EasyWebMap plugin;
     private final TileHandler tileHandler;
     private final BatchTileHandler batchTileHandler;
     private final PlayerHandler playerHandler;
     private final StaticHandler staticHandler;
+    private final boolean isSecure;
 
     public HttpRequestHandler(EasyWebMap plugin) {
+        this(plugin, false);
+    }
+
+    public HttpRequestHandler(EasyWebMap plugin, boolean isSecure) {
         this.plugin = plugin;
+        this.isSecure = isSecure;
         this.tileHandler = new TileHandler(plugin);
         this.batchTileHandler = new BatchTileHandler(plugin, plugin.getTileManager());
         this.playerHandler = new PlayerHandler(plugin);
@@ -39,6 +47,12 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
             return;
         }
         String uri = req.uri();
+
+        // Handle ACME HTTP-01 challenge for Let's Encrypt
+        if (uri.startsWith(ACME_CHALLENGE_PATH)) {
+            this.handleAcmeChallenge(ctx, uri);
+            return;
+        }
         if (uri.equals("/ws") && this.isWebSocketUpgrade(req)) {
             this.handleWebSocketUpgrade(ctx, req);
             return;
@@ -68,7 +82,8 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
     }
 
     private void handleWebSocketUpgrade(ChannelHandlerContext ctx, FullHttpRequest req) {
-        String wsUrl = "ws://" + req.headers().get(HttpHeaderNames.HOST) + "/ws";
+        String protocol = this.isSecure ? "wss" : "ws";
+        String wsUrl = protocol + "://" + req.headers().get(HttpHeaderNames.HOST) + "/ws";
         WebSocketServerHandshakerFactory factory = new WebSocketServerHandshakerFactory(wsUrl, null, false);
         WebSocketServerHandshaker handshaker = factory.newHandshaker(req);
         if (handshaker == null) {
@@ -77,6 +92,26 @@ public class HttpRequestHandler extends SimpleChannelInboundHandler<FullHttpRequ
             handshaker.handshake(ctx.channel(), req);
             ctx.pipeline().replace(this, "websocket", new WebSocketHandler(this.plugin, handshaker));
             this.plugin.getPlayerTracker().addChannel(ctx.channel());
+        }
+    }
+
+    private void handleAcmeChallenge(ChannelHandlerContext ctx, String uri) {
+        String token = uri.substring(ACME_CHALLENGE_PATH.length());
+        String response = this.plugin.getAcmeManager() != null
+                ? this.plugin.getAcmeManager().getChallengeResponse(token)
+                : null;
+
+        if (response != null) {
+            io.netty.buffer.ByteBuf content = ctx.alloc().buffer();
+            content.writeBytes(response.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            DefaultFullHttpResponse httpResponse = new DefaultFullHttpResponse(
+                    HttpVersion.HTTP_1_1, HttpResponseStatus.OK, content);
+            httpResponse.headers()
+                    .set(HttpHeaderNames.CONTENT_TYPE, "text/plain")
+                    .set(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes());
+            ctx.writeAndFlush(httpResponse).addListener(ChannelFutureListener.CLOSE);
+        } else {
+            this.sendError(ctx, HttpResponseStatus.NOT_FOUND);
         }
     }
 
