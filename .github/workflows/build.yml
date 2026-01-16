@@ -45,9 +45,22 @@ jobs:
         with:
           name: EasyWebMap
 
+      - name: Checkout for commit info
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Generate version
         id: version
         run: echo "version=v1.0.${{ github.run_number }}" >> $GITHUB_OUTPUT
+
+      - name: Get changelog from commit
+        id: changelog
+        run: |
+          echo "message<<EOF" >> $GITHUB_OUTPUT
+          git log -1 --pretty=format:"%B" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Rename JAR
         run: mv EasyWebMap-*.jar EasyWebMap-${{ steps.version.outputs.version }}.jar
@@ -62,6 +75,12 @@ jobs:
 
             **Commit:** ${{ github.sha }}
             **Released:** ${{ github.event.head_commit.timestamp }}
+
+            ---
+
+            ### Changelog
+
+            ${{ steps.changelog.outputs.message }}
 
             ---
 
