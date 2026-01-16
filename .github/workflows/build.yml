@@ -44,6 +44,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: EasyWebMap
+          path: .
+
+      - name: List downloaded files
+        run: ls -la
 
       - name: Checkout for commit info
         uses: actions/checkout@v4
@@ -63,7 +67,11 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Rename JAR
-        run: mv EasyWebMap-*.jar EasyWebMap-${{ steps.version.outputs.version }}.jar
+        run: |
+          # Find the JAR wherever it is
+          JAR_FILE=$(find . -name "EasyWebMap-*.jar" -type f | head -1)
+          echo "Found JAR: $JAR_FILE"
+          mv "$JAR_FILE" EasyWebMap-${{ steps.version.outputs.version }}.jar
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
