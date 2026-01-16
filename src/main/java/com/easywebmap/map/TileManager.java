@@ -28,6 +28,8 @@ public class TileManager {
     // Limit concurrent tile generations to prevent CPU spikes
     private static final int MAX_CONCURRENT_GENERATIONS = 4;
     private final Semaphore generationSemaphore = new Semaphore(MAX_CONCURRENT_GENERATIONS);
+    // Empty tiles are ~270 bytes, real tiles are 10KB+
+    private static final int EMPTY_TILE_THRESHOLD = 500;
 
     public TileManager(EasyWebMap plugin) {
         this.plugin = plugin;
@@ -100,7 +102,7 @@ public class TileManager {
         this.pendingRequests.put(cacheKey, future);
         future.whenComplete((data, ex) -> {
             this.pendingRequests.remove(cacheKey);
-            if (data != null && data.length > 0 && ex == null) {
+            if (data != null && data.length > EMPTY_TILE_THRESHOLD && ex == null) {
                 this.memoryCache.put(cacheKey, data);
                 if (this.plugin.getConfig().isUseDiskCache()) {
                     this.diskCache.putAsync(worldName, zoom, tileX, tileZ, data);
@@ -159,7 +161,8 @@ public class TileManager {
         this.pendingRequests.put(cacheKey, future);
         future.whenComplete((data, ex) -> {
             this.pendingRequests.remove(cacheKey);
-            if (data != null && data.length > 0 && ex == null) {
+            // Don't cache empty tiles - they should regenerate when chunk gets explored
+            if (data != null && data.length > EMPTY_TILE_THRESHOLD && ex == null) {
                 this.memoryCache.put(cacheKey, data);
                 if (this.plugin.getConfig().isUseDiskCache()) {
                     this.diskCache.putAsync(worldName, 0, tileX, tileZ, data);
@@ -193,7 +196,8 @@ public class TileManager {
         this.pendingPixelRequests.put(cacheKey, future);
         future.whenComplete((data, ex) -> {
             this.pendingPixelRequests.remove(cacheKey);
-            if (data != null && !data.isEmpty() && ex == null) {
+            // Don't cache empty tiles - they should regenerate when chunk gets explored
+            if (data != null && !data.isEmpty() && data.pngBytes.length > EMPTY_TILE_THRESHOLD && ex == null) {
                 // Cache pixels for compositing, evict if too many
                 if (this.pixelCache.size() < MAX_PIXEL_CACHE) {
                     this.pixelCache.put(cacheKey, data);
