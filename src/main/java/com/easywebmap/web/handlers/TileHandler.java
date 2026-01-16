@@ -9,6 +9,7 @@ import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.HttpVersion;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -39,6 +40,7 @@ public class TileHandler {
             this.sendError(ctx, HttpResponseStatus.FORBIDDEN);
             return;
         }
+        boolean keepAlive = HttpUtil.isKeepAlive(req);
         this.plugin.getTileManager().getTile(worldName, zoom, x, z).thenAccept(data -> {
             if (!ctx.channel().isActive()) {
                 return;
@@ -51,15 +53,22 @@ public class TileHandler {
             response.headers()
                     .set(HttpHeaderNames.CONTENT_TYPE, "image/png")
                     .set(HttpHeaderNames.CONTENT_LENGTH, data.length)
-                    .set(HttpHeaderNames.CACHE_CONTROL, "max-age=30")
+                    .set(HttpHeaderNames.CACHE_CONTROL, "max-age=300")
                     .set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_ORIGIN, "*");
-            ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
+            if (keepAlive) {
+                response.headers().set(HttpHeaderNames.CONNECTION, "keep-alive");
+                ctx.writeAndFlush(response);
+            } else {
+                ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
+            }
         });
     }
 
     private void sendError(ChannelHandlerContext ctx, HttpResponseStatus status) {
         DefaultFullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status);
-        response.headers().set(HttpHeaderNames.CONTENT_LENGTH, 0);
+        response.headers()
+                .set(HttpHeaderNames.CONTENT_LENGTH, 0)
+                .set(HttpHeaderNames.CONNECTION, "close");
         ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
     }
 }

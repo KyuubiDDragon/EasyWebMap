@@ -8,6 +8,7 @@ import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
+import io.netty.handler.codec.http.HttpContentCompressor;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpServerCodec;
 import io.netty.handler.ssl.SslContext;
@@ -44,6 +45,7 @@ public class WebServer {
                             ch.pipeline()
                                     .addLast("codec", new HttpServerCodec())
                                     .addLast("aggregator", new HttpObjectAggregator(262144))
+                                    .addLast("compressor", new HttpContentCompressor())
                                     .addLast("handler", new HttpRequestHandler(plugin, false));
                         }
                     });
@@ -79,6 +81,7 @@ public class WebServer {
                             ch.pipeline()
                                     .addLast("codec", new HttpServerCodec())
                                     .addLast("aggregator", new HttpObjectAggregator(262144))
+                                    .addLast("compressor", new HttpContentCompressor())
                                     .addLast("handler", new HttpRequestHandler(plugin, true));
                         }
                     });

@@ -65,6 +65,9 @@ public class EasyWebMap extends JavaPlugin {
         if (this.webServer != null) {
             this.webServer.shutdown();
         }
+        if (this.tileManager != null) {
+            this.tileManager.shutdown();
+        }
         System.out.println("[EasyWebMap] Shutdown complete");
     }
 

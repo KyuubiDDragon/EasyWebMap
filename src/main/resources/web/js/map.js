@@ -134,9 +134,21 @@
                     if (tileData.empty) {
                         this._setEmptyTile(request.tile, request.done);
                     } else if (tileData.data) {
-                        request.tile.src = 'data:image/png;base64,' + tileData.data;
-                        request.tile.onload = () => request.done(null, request.tile);
-                        request.tile.onerror = () => request.done(new Error('Image load failed'), request.tile);
+                        // Use Blob URL instead of Base64 for better memory/performance
+                        const binary = atob(tileData.data);
+                        const bytes = new Uint8Array(binary.length);
+                        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                        const blob = new Blob([bytes], { type: 'image/png' });
+                        const url = URL.createObjectURL(blob);
+                        request.tile.onload = () => {
+                            URL.revokeObjectURL(url);
+                            request.done(null, request.tile);
+                        };
+                        request.tile.onerror = () => {
+                            URL.revokeObjectURL(url);
+                            request.done(new Error('Image load failed'), request.tile);
+                        };
+                        request.tile.src = url;
                     } else if (tileData.error) {
                         request.done(new Error(tileData.error), request.tile);
                     }
@@ -203,8 +215,12 @@
 
         updateTileLayer();
 
+        // Throttled mousemove for coordinate display (~60fps max)
+        let lastMoveTime = 0;
         map.on('mousemove', function(e) {
-            // Convert Leaflet coords to world coords (divide by scale factor)
+            const now = performance.now();
+            if (now - lastMoveTime < 16) return;
+            lastMoveTime = now;
             const x = Math.round(e.latlng.lng / SCALE);
             const z = Math.round(-e.latlng.lat / SCALE);
             document.getElementById('coords-display').textContent = `X: ${x}, Z: ${z}`;
@@ -278,7 +294,10 @@
     }
 
     function clearPlayerMarkers() {
-        Object.values(playerMarkers).forEach(m => map.removeLayer(m));
+        Object.values(playerMarkers).forEach(m => {
+            m.unbindTooltip();
+            map.removeLayer(m);
+        });
         playerMarkers = {};
         playerData = {};
     }
@@ -363,7 +382,6 @@
             count++;
             const pos = worldToLatLng(p.x, p.z);
             const yaw = p.yaw || 0;
-            console.log(`Player ${p.name}: yaw=${yaw}, rotX=${p.rotX}, rotY=${p.rotY}, rotZ=${p.rotZ}`);
 
             // Store player data
             playerData[p.uuid] = {
@@ -395,6 +413,7 @@
 
         Object.keys(playerMarkers).forEach(uuid => {
             if (!seen.has(uuid)) {
+                playerMarkers[uuid].unbindTooltip();
                 map.removeLayer(playerMarkers[uuid]);
                 delete playerMarkers[uuid];
             }
@@ -427,13 +446,55 @@
         // Sort by name
         players.sort((a, b) => a.name.localeCompare(b.name));
 
-        listEl.innerHTML = players.map(p => `
-            <li data-uuid="${p.uuid}" onclick="window.focusPlayer('${p.uuid}')">
-                <span class="player-icon"></span>
-                <span class="player-name">${escapeHtml(p.name)}</span>
-                <span class="player-coords">${p.x}, ${p.z}</span>
-            </li>
-        `).join('');
+        // Differential update - only change what's needed
+        const existingItems = new Map();
+        listEl.querySelectorAll('li[data-uuid]').forEach(li => {
+            existingItems.set(li.dataset.uuid, li);
+        });
+
+        const currentUuids = new Set(players.map(p => p.uuid));
+
+        // Remove empty message if present
+        const emptyMsg = listEl.querySelector('.player-list-empty');
+        if (emptyMsg) emptyMsg.remove();
+
+        // Remove players no longer online
+        existingItems.forEach((li, uuid) => {
+            if (!currentUuids.has(uuid)) li.remove();
+        });
+
+        // Update or add players
+        let prevElement = null;
+        for (const p of players) {
+            let li = existingItems.get(p.uuid);
+            if (li) {
+                // Update coords only if changed
+                const coordsEl = li.querySelector('.player-coords');
+                const newCoords = `${p.x}, ${p.z}`;
+                if (coordsEl.textContent !== newCoords) {
+                    coordsEl.textContent = newCoords;
+                }
+            } else {
+                // Create new element
+                li = document.createElement('li');
+                li.dataset.uuid = p.uuid;
+                li.onclick = () => window.focusPlayer(p.uuid);
+                li.innerHTML = `
+                    <span class="player-icon"></span>
+                    <span class="player-name">${escapeHtml(p.name)}</span>
+                    <span class="player-coords">${p.x}, ${p.z}</span>
+                `;
+            }
+            // Ensure correct order
+            if (prevElement) {
+                if (li.previousElementSibling !== prevElement) {
+                    prevElement.after(li);
+                }
+            } else if (li.parentElement !== listEl || li !== listEl.firstElementChild) {
+                listEl.prepend(li);
+            }
+            prevElement = li;
+        }
     }
 
     function escapeHtml(text) {

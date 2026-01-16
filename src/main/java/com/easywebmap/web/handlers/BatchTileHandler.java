@@ -14,6 +14,7 @@ import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.HttpVersion;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -76,6 +77,7 @@ public class BatchTileHandler {
             coords.add(new TileCoord(z, x, y));
         }
 
+        boolean keepAlive = HttpUtil.isKeepAlive(req);
         Map<String, CompletableFuture<byte[]>> futures = new LinkedHashMap<>();
         for (TileCoord coord : coords) {
             String key = coord.z + "/" + coord.x + "/" + coord.y;
@@ -122,7 +124,12 @@ public class BatchTileHandler {
                     .set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_METHODS, "POST, OPTIONS")
                     .set(HttpHeaderNames.ACCESS_CONTROL_ALLOW_HEADERS, "Content-Type");
 
-                ctx.writeAndFlush(httpResponse).addListener(ChannelFutureListener.CLOSE);
+                if (keepAlive) {
+                    httpResponse.headers().set(HttpHeaderNames.CONNECTION, "keep-alive");
+                    ctx.writeAndFlush(httpResponse);
+                } else {
+                    ctx.writeAndFlush(httpResponse).addListener(ChannelFutureListener.CLOSE);
+                }
             });
     }
 
@@ -132,7 +139,9 @@ public class BatchTileHandler {
 
     private void sendError(ChannelHandlerContext ctx, HttpResponseStatus status) {
         DefaultFullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status);
-        response.headers().set(HttpHeaderNames.CONTENT_LENGTH, 0);
+        response.headers()
+                .set(HttpHeaderNames.CONTENT_LENGTH, 0)
+                .set(HttpHeaderNames.CONNECTION, "close");
         ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
     }
 

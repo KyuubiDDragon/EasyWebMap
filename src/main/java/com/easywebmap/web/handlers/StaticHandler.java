@@ -8,6 +8,7 @@ import io.netty.handler.codec.http.FullHttpRequest;
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpMethod;
 import io.netty.handler.codec.http.HttpResponseStatus;
+import io.netty.handler.codec.http.HttpUtil;
 import io.netty.handler.codec.http.HttpVersion;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -54,6 +55,9 @@ public class StaticHandler {
             return;
         }
         String contentType = this.getContentType(uri);
+        boolean keepAlive = HttpUtil.isKeepAlive(req);
+        // HTML gets no-cache, assets get long cache with immutable
+        String cacheControl = uri.endsWith(".html") || uri.equals("/") ? "no-cache" : "max-age=86400, immutable";
         DefaultFullHttpResponse response = new DefaultFullHttpResponse(
                 HttpVersion.HTTP_1_1,
                 HttpResponseStatus.OK,
@@ -62,8 +66,13 @@ public class StaticHandler {
         response.headers()
                 .set(HttpHeaderNames.CONTENT_TYPE, contentType)
                 .set(HttpHeaderNames.CONTENT_LENGTH, content.length)
-                .set(HttpHeaderNames.CACHE_CONTROL, "no-cache");
-        ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
+                .set(HttpHeaderNames.CACHE_CONTROL, cacheControl);
+        if (keepAlive) {
+            response.headers().set(HttpHeaderNames.CONNECTION, "keep-alive");
+            ctx.writeAndFlush(response);
+        } else {
+            ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
+        }
     }
 
     private byte[] loadResource(String path) {
@@ -97,7 +106,9 @@ public class StaticHandler {
 
     private void sendError(ChannelHandlerContext ctx, HttpResponseStatus status) {
         DefaultFullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, status);
-        response.headers().set(HttpHeaderNames.CONTENT_LENGTH, 0);
+        response.headers()
+                .set(HttpHeaderNames.CONTENT_LENGTH, 0)
+                .set(HttpHeaderNames.CONNECTION, "close");
         ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
     }
 }

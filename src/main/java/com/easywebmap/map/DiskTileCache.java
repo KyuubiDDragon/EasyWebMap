@@ -4,15 +4,27 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
+/**
+ * Async disk cache for tiles - prevents blocking Netty event loop.
+ */
 public class DiskTileCache {
     private final Path cacheDirectory;
     private final ConcurrentHashMap<String, Long> tileTimestamps;
+    private final ExecutorService diskExecutor;
 
     public DiskTileCache(Path dataDirectory) {
         this.cacheDirectory = dataDirectory.resolve("tilecache");
         this.tileTimestamps = new ConcurrentHashMap<>();
+        this.diskExecutor = Executors.newFixedThreadPool(2, r -> {
+            Thread t = new Thread(r, "EasyWebMap-DiskIO");
+            t.setDaemon(true);
+            return t;
+        });
         try {
             Files.createDirectories(this.cacheDirectory);
         } catch (IOException e) {
@@ -20,6 +32,9 @@ public class DiskTileCache {
         }
     }
 
+    /**
+     * Synchronous get - for use in cached paths where blocking is acceptable.
+     */
     public byte[] get(String worldName, int zoom, int x, int z) {
         Path tilePath = getTilePath(worldName, zoom, x, z);
         if (!Files.exists(tilePath)) {
@@ -32,13 +47,36 @@ public class DiskTileCache {
         }
     }
 
+    /**
+     * Async get - prevents blocking Netty threads.
+     */
+    public CompletableFuture<byte[]> getAsync(String worldName, int zoom, int x, int z) {
+        return CompletableFuture.supplyAsync(() -> get(worldName, zoom, x, z), this.diskExecutor);
+    }
+
+    /**
+     * Async put - fire and forget disk write.
+     */
+    public void putAsync(String worldName, int zoom, int x, int z, byte[] data) {
+        String key = createKey(worldName, zoom, x, z);
+        this.tileTimestamps.put(key, System.currentTimeMillis());
+        this.diskExecutor.execute(() -> putSync(worldName, zoom, x, z, data));
+    }
+
+    /**
+     * Synchronous put - for direct calls.
+     */
     public void put(String worldName, int zoom, int x, int z, byte[] data) {
+        putSync(worldName, zoom, x, z, data);
+        String key = createKey(worldName, zoom, x, z);
+        this.tileTimestamps.put(key, System.currentTimeMillis());
+    }
+
+    private void putSync(String worldName, int zoom, int x, int z, byte[] data) {
         Path tilePath = getTilePath(worldName, zoom, x, z);
         try {
             Files.createDirectories(tilePath.getParent());
             Files.write(tilePath, data);
-            String key = createKey(worldName, zoom, x, z);
-            this.tileTimestamps.put(key, System.currentTimeMillis());
         } catch (IOException e) {
             System.err.println("[EasyWebMap] Failed to cache tile: " + e.getMessage());
         }
@@ -52,7 +90,6 @@ public class DiskTileCache {
             return System.currentTimeMillis() - cachedTimestamp;
         }
 
-        // Check file modification time
         Path tilePath = getTilePath(worldName, zoom, x, z);
         if (!Files.exists(tilePath)) {
             return Long.MAX_VALUE;
@@ -106,8 +143,11 @@ public class DiskTileCache {
         } catch (IOException e) {
             System.err.println("[EasyWebMap] Failed to clear world cache: " + e.getMessage());
         }
-        // Clear timestamps for this world
         this.tileTimestamps.entrySet().removeIf(entry -> entry.getKey().startsWith(worldName + "/"));
+    }
+
+    public void shutdown() {
+        this.diskExecutor.shutdown();
     }
 
     private Path getTilePath(String worldName, int zoom, int x, int z) {

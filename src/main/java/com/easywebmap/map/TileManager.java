@@ -13,22 +13,30 @@ import com.hypixel.hytale.math.vector.Vector3d;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
 
 public class TileManager {
     private final EasyWebMap plugin;
     private final TileCache memoryCache;
     private final DiskTileCache diskCache;
     private final ConcurrentHashMap<String, CompletableFuture<byte[]>> pendingRequests;
+    private final ConcurrentHashMap<String, CompletableFuture<PngEncoder.TileData>> pendingPixelRequests;
     private final ConcurrentHashMap<String, CachedChunkIndexes> chunkIndexCache;
+    private final ConcurrentHashMap<String, PngEncoder.TileData> pixelCache;
     private CompositeTileGenerator compositeTileGenerator;
+    private static final int MAX_PIXEL_CACHE = 512;
+    // Limit concurrent tile generations to prevent CPU spikes
+    private static final int MAX_CONCURRENT_GENERATIONS = 4;
+    private final Semaphore generationSemaphore = new Semaphore(MAX_CONCURRENT_GENERATIONS);
 
     public TileManager(EasyWebMap plugin) {
         this.plugin = plugin;
         this.memoryCache = new TileCache(plugin.getConfig().getTileCacheSize());
         this.diskCache = new DiskTileCache(plugin.getDataDirectory());
         this.pendingRequests = new ConcurrentHashMap<>();
+        this.pendingPixelRequests = new ConcurrentHashMap<>();
         this.chunkIndexCache = new ConcurrentHashMap<>();
-        // Initialize composite generator after this object is constructed
+        this.pixelCache = new ConcurrentHashMap<>();
         this.compositeTileGenerator = new CompositeTileGenerator(plugin, this);
     }
 
@@ -95,7 +103,7 @@ public class TileManager {
             if (data != null && data.length > 0 && ex == null) {
                 this.memoryCache.put(cacheKey, data);
                 if (this.plugin.getConfig().isUseDiskCache()) {
-                    this.diskCache.put(worldName, zoom, tileX, tileZ, data);
+                    this.diskCache.putAsync(worldName, zoom, tileX, tileZ, data);
                 }
             }
         });
@@ -154,11 +162,90 @@ public class TileManager {
             if (data != null && data.length > 0 && ex == null) {
                 this.memoryCache.put(cacheKey, data);
                 if (this.plugin.getConfig().isUseDiskCache()) {
-                    this.diskCache.put(worldName, 0, tileX, tileZ, data);
+                    this.diskCache.putAsync(worldName, 0, tileX, tileZ, data);
                 }
             }
         });
         return future;
+    }
+
+    /**
+     * Get a base tile with raw pixels for compositing.
+     * Returns TileData containing both PNG bytes and raw ARGB pixels.
+     */
+    public CompletableFuture<PngEncoder.TileData> getBaseTileWithPixels(String worldName, int tileX, int tileZ) {
+        String cacheKey = TileCache.createKey(worldName, 0, tileX, tileZ);
+
+        // 1. Check pixel cache
+        PngEncoder.TileData cached = this.pixelCache.get(cacheKey);
+        if (cached != null) {
+            return CompletableFuture.completedFuture(cached);
+        }
+
+        // 2. Check pending
+        CompletableFuture<PngEncoder.TileData> pending = this.pendingPixelRequests.get(cacheKey);
+        if (pending != null) {
+            return pending;
+        }
+
+        // 3. Generate with pixels
+        CompletableFuture<PngEncoder.TileData> future = this.generateTileWithPixels(worldName, tileX, tileZ);
+        this.pendingPixelRequests.put(cacheKey, future);
+        future.whenComplete((data, ex) -> {
+            this.pendingPixelRequests.remove(cacheKey);
+            if (data != null && !data.isEmpty() && ex == null) {
+                // Cache pixels for compositing, evict if too many
+                if (this.pixelCache.size() < MAX_PIXEL_CACHE) {
+                    this.pixelCache.put(cacheKey, data);
+                }
+                // Also cache PNG bytes
+                this.memoryCache.put(cacheKey, data.pngBytes);
+                if (this.plugin.getConfig().isUseDiskCache()) {
+                    this.diskCache.putAsync(worldName, 0, tileX, tileZ, data.pngBytes);
+                }
+            }
+        });
+        return future;
+    }
+
+    private CompletableFuture<PngEncoder.TileData> generateTileWithPixels(String worldName, int tileX, int tileZ) {
+        World world = Universe.get().getWorld(worldName);
+        int tileSize = this.plugin.getConfig().getTileSize();
+        if (world == null) {
+            return CompletableFuture.completedFuture(new PngEncoder.TileData(
+                PngEncoder.encodeEmpty(tileSize), new int[0], tileSize));
+        }
+
+        if (this.plugin.getConfig().isRenderExploredChunksOnly()) {
+            if (!this.isChunkExplored(world, tileX, tileZ)) {
+                return CompletableFuture.completedFuture(new PngEncoder.TileData(
+                    PngEncoder.encodeEmpty(tileSize), new int[0], tileSize));
+            }
+        }
+
+        WorldMapManager mapManager = world.getWorldMapManager();
+
+        // Acquire semaphore to limit concurrent generations
+        try {
+            this.generationSemaphore.acquire();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return CompletableFuture.completedFuture(new PngEncoder.TileData(
+                PngEncoder.encodeEmpty(tileSize), new int[0], tileSize));
+        }
+
+        return mapManager.getImageAsync(tileX, tileZ)
+                .thenApply(mapImage -> {
+                    if (mapImage == null) {
+                        return new PngEncoder.TileData(PngEncoder.encodeEmpty(tileSize), new int[0], tileSize);
+                    }
+                    return PngEncoder.encodeWithPixels(mapImage, tileSize);
+                })
+                .exceptionally(ex -> {
+                    System.err.println("[EasyWebMap] Failed to generate tile: " + ex.getMessage());
+                    return new PngEncoder.TileData(PngEncoder.encodeEmpty(tileSize), new int[0], tileSize);
+                })
+                .whenComplete((result, ex) -> this.generationSemaphore.release());
     }
 
     private boolean arePlayersNearby(World world, int tileX, int tileZ) {
@@ -229,6 +316,15 @@ public class TileManager {
         }
 
         WorldMapManager mapManager = world.getWorldMapManager();
+
+        // Acquire semaphore to limit concurrent generations
+        try {
+            this.generationSemaphore.acquire();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return CompletableFuture.completedFuture(PngEncoder.encodeEmpty(this.plugin.getConfig().getTileSize()));
+        }
+
         return mapManager.getImageAsync(tileX, tileZ)
                 .thenApply(mapImage -> {
                     if (mapImage == null) {
@@ -239,7 +335,8 @@ public class TileManager {
                 .exceptionally(ex -> {
                     System.err.println("[EasyWebMap] Failed to generate tile: " + ex.getMessage());
                     return PngEncoder.encodeEmpty(this.plugin.getConfig().getTileSize());
-                });
+                })
+                .whenComplete((result, ex) -> this.generationSemaphore.release());
     }
 
     private boolean isChunkExplored(World world, int chunkX, int chunkZ) {
@@ -322,12 +419,18 @@ public class TileManager {
 
     public void clearCache() {
         this.memoryCache.clear();
+        this.pixelCache.clear();
         this.diskCache.clear();
         this.chunkIndexCache.clear();
     }
 
     public void clearMemoryCache() {
         this.memoryCache.clear();
+        this.pixelCache.clear();
+    }
+
+    public void shutdown() {
+        this.diskCache.shutdown();
     }
 
     public int getMemoryCacheSize() {
