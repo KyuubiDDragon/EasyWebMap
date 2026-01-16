@@ -381,6 +381,58 @@ public class TileManager {
         }
     }
 
+    /**
+     * Check if any chunks in the given area are explored.
+     * Used for early bail-out on composite tiles over unexplored areas.
+     */
+    public boolean hasAnyExploredChunks(String worldName, int baseChunkX, int baseChunkZ, int chunksPerAxis) {
+        if (!this.plugin.getConfig().isRenderExploredChunksOnly()) {
+            return true; // If we're not filtering, assume there's content
+        }
+
+        World world = Universe.get().getWorld(worldName);
+        if (world == null) {
+            return false;
+        }
+
+        try {
+            LongSet indexes = this.getCachedChunkIndexes(world);
+            if (indexes == null) {
+                return true; // Fail open
+            }
+
+            // Quick sampling - check corners and center first
+            int[][] samplePoints = {
+                {0, 0}, // top-left
+                {chunksPerAxis - 1, 0}, // top-right
+                {0, chunksPerAxis - 1}, // bottom-left
+                {chunksPerAxis - 1, chunksPerAxis - 1}, // bottom-right
+                {chunksPerAxis / 2, chunksPerAxis / 2} // center
+            };
+
+            for (int[] point : samplePoints) {
+                long idx = ChunkUtil.indexChunk(baseChunkX + point[0], baseChunkZ + point[1]);
+                if (indexes.contains(idx)) {
+                    return true;
+                }
+            }
+
+            // If samples show nothing, do a full scan (but this is rare)
+            for (int dz = 0; dz < chunksPerAxis; dz++) {
+                for (int dx = 0; dx < chunksPerAxis; dx++) {
+                    long idx = ChunkUtil.indexChunk(baseChunkX + dx, baseChunkZ + dz);
+                    if (indexes.contains(idx)) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        } catch (Exception e) {
+            return true; // Fail open
+        }
+    }
+
     private LongSet getCachedChunkIndexes(World world) {
         String worldName = world.getName();
         CachedChunkIndexes cached = this.chunkIndexCache.get(worldName);

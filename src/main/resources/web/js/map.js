@@ -98,7 +98,7 @@
 
             // Use actual zoom level for tile pyramid support
             // At zoom < 0, server provides composite tiles
-            const zoom = Math.min(coords.z, 0);  // Clamp to 0 max (server handles -4 to 0)
+            const zoom = Math.min(coords.z, 0);  // Clamp to 0 max (server handles -3 to 0)
             const key = `${zoom}/${coords.x}/${coords.y}`;
             this._queueTileRequest(key, coords, tile, done);
 
@@ -317,13 +317,14 @@
         }
 
         // Batch tile layer - reduces HTTP requests by batching multiple tiles per request
-        // minNativeZoom: -4 means server provides composite tiles at negative zoom levels
-        // This dramatically reduces DOM elements at zoomed-out views
+        // minNativeZoom: -3 means server provides composite tiles at negative zoom levels
+        // Using -3 instead of -4 reduces base tiles per composite from 256 to 64 (4x faster)
+        // Users can still zoom out to -4, tiles will be scaled from -3
         tileLayer = L.tileLayer.batch('/api/tiles/' + currentWorld + '/{z}/{x}/{y}.png', {
             tileSize: TILE_SIZE,
-            minNativeZoom: -4,  // Server provides tiles from -4 to 0
+            minNativeZoom: -3,  // Server provides tiles from -3 to 0 (64 base tiles max)
             maxNativeZoom: 0,   // Max native zoom is 0 (single chunk per tile)
-            minZoom: -4,
+            minZoom: -4,        // User can still zoom out to -4 (scaled from -3)
             maxZoom: 4,
             noWrap: true,
             bounds: [[-100000, -100000], [100000, 100000]],
