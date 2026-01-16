@@ -61,6 +61,11 @@ public class MapConfig {
                         this.data.useDiskCache = defaults.useDiskCache;
                         needsSave = true;
                     }
+                    // Tile pyramid configuration
+                    if (!jsonObj.has("enableTilePyramids")) {
+                        this.data.enableTilePyramids = defaults.enableTilePyramids;
+                        needsSave = true;
+                    }
                     // SSL configuration migration
                     if (!jsonObj.has("enableHttps")) {
                         this.data.enableHttps = defaults.enableHttps;
@@ -160,6 +165,10 @@ public class MapConfig {
         return this.data.useDiskCache;
     }
 
+    public boolean isEnableTilePyramids() {
+        return this.data.enableTilePyramids;
+    }
+
     public boolean isHttpsEnabled() {
         return this.data.enableHttps;
     }
@@ -192,6 +201,7 @@ public class MapConfig {
         int tileRefreshRadius = 5;
         long tileRefreshIntervalMs = 60000;
         boolean useDiskCache = true;
+        boolean enableTilePyramids = true;  // Enable composite tiles for zoomed-out views
 
         // SSL/HTTPS configuration
         boolean enableHttps = false;

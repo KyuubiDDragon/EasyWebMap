@@ -31,7 +31,10 @@
             tile.alt = '';
             tile.setAttribute('role', 'presentation');
 
-            const key = `0/${coords.x}/${coords.y}`;
+            // Use actual zoom level for tile pyramid support
+            // At zoom < 0, server provides composite tiles
+            const zoom = Math.min(coords.z, 0);  // Clamp to 0 max (server handles -4 to 0)
+            const key = `${zoom}/${coords.x}/${coords.y}`;
             this._queueTileRequest(key, coords, tile, done);
 
             return tile;
@@ -174,6 +177,7 @@
     let playerData = {};  // Store player data for list
     let reconnectTimer = null;
     let playerListCollapsed = false;
+    let initialPositionSet = false;  // Track if we've set initial map position
 
     function initMap() {
         // Using CRS.Simple: 1 unit = 1 pixel at zoom 0
@@ -215,10 +219,12 @@
         }
 
         // Batch tile layer - reduces HTTP requests by batching multiple tiles per request
-        tileLayer = L.tileLayer.batch('/api/tiles/' + currentWorld + '/0/{x}/{y}.png', {
+        // minNativeZoom: -4 means server provides composite tiles at negative zoom levels
+        // This dramatically reduces DOM elements at zoomed-out views
+        tileLayer = L.tileLayer.batch('/api/tiles/' + currentWorld + '/{z}/{x}/{y}.png', {
             tileSize: TILE_SIZE,
-            minNativeZoom: 0,
-            maxNativeZoom: 0,
+            minNativeZoom: -4,  // Server provides tiles from -4 to 0
+            maxNativeZoom: 0,   // Max native zoom is 0 (single chunk per tile)
             minZoom: -4,
             maxZoom: 4,
             noWrap: true,
@@ -396,6 +402,17 @@
 
         document.getElementById('player-count-display').textContent = `Players: ${count}`;
         updatePlayerList();
+
+        // On first load, if exactly 1 player online, center map on them
+        if (!initialPositionSet && count === 1) {
+            const player = players[0];
+            const pos = worldToLatLng(player.x, player.z);
+            map.setView(pos, 0);
+            initialPositionSet = true;
+        } else if (!initialPositionSet && count > 0) {
+            // Multiple players - just mark as set, keep default position
+            initialPositionSet = true;
+        }
     }
 
     function updatePlayerList() {

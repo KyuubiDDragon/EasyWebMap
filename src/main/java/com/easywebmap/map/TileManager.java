@@ -20,6 +20,7 @@ public class TileManager {
     private final DiskTileCache diskCache;
     private final ConcurrentHashMap<String, CompletableFuture<byte[]>> pendingRequests;
     private final ConcurrentHashMap<String, CachedChunkIndexes> chunkIndexCache;
+    private CompositeTileGenerator compositeTileGenerator;
 
     public TileManager(EasyWebMap plugin) {
         this.plugin = plugin;
@@ -27,10 +28,86 @@ public class TileManager {
         this.diskCache = new DiskTileCache(plugin.getDataDirectory());
         this.pendingRequests = new ConcurrentHashMap<>();
         this.chunkIndexCache = new ConcurrentHashMap<>();
+        // Initialize composite generator after this object is constructed
+        this.compositeTileGenerator = new CompositeTileGenerator(plugin, this);
     }
 
     public CompletableFuture<byte[]> getTile(String worldName, int zoom, int tileX, int tileZ) {
+        // Route negative zoom levels to composite tile generator
+        if (zoom < 0 && this.plugin.getConfig().isEnableTilePyramids()) {
+            return this.getCompositeTile(worldName, zoom, tileX, tileZ);
+        }
+
+        // For zoom >= 0, use base tile logic
+        return this.getBaseTile(worldName, tileX, tileZ);
+    }
+
+    /**
+     * Get a composite tile at a negative zoom level.
+     * Composite tiles combine multiple base tiles into one.
+     */
+    private CompletableFuture<byte[]> getCompositeTile(String worldName, int zoom, int tileX, int tileZ) {
         String cacheKey = TileCache.createKey(worldName, zoom, tileX, tileZ);
+
+        // 1. Check memory cache first
+        byte[] memoryCached = this.memoryCache.get(cacheKey);
+        if (memoryCached != null) {
+            return CompletableFuture.completedFuture(memoryCached);
+        }
+
+        // 2. Check if already generating
+        CompletableFuture<byte[]> pending = this.pendingRequests.get(cacheKey);
+        if (pending != null) {
+            return pending;
+        }
+
+        // 3. Check disk cache
+        if (this.plugin.getConfig().isUseDiskCache()) {
+            byte[] diskCached = this.diskCache.get(worldName, zoom, tileX, tileZ);
+            if (diskCached != null) {
+                long tileAge = this.diskCache.getTileAge(worldName, zoom, tileX, tileZ);
+                // Use longer refresh interval for composite tiles (they're more expensive)
+                long refreshInterval = this.plugin.getConfig().getTileRefreshIntervalMs() * 2;
+
+                if (tileAge < refreshInterval) {
+                    this.memoryCache.put(cacheKey, diskCached);
+                    return CompletableFuture.completedFuture(diskCached);
+                }
+
+                // Check if any players are in the area covered by this composite tile
+                int chunksPerAxis = this.compositeTileGenerator.getChunksPerAxis(zoom);
+                int baseChunkX = tileX * chunksPerAxis;
+                int baseChunkZ = tileZ * chunksPerAxis;
+                World world = Universe.get().getWorld(worldName);
+
+                if (world == null || !this.arePlayersInArea(world, baseChunkX, baseChunkZ, chunksPerAxis)) {
+                    this.memoryCache.put(cacheKey, diskCached);
+                    return CompletableFuture.completedFuture(diskCached);
+                }
+            }
+        }
+
+        // 4. Generate composite tile
+        CompletableFuture<byte[]> future = this.compositeTileGenerator.generateCompositeTile(worldName, zoom, tileX, tileZ);
+        this.pendingRequests.put(cacheKey, future);
+        future.whenComplete((data, ex) -> {
+            this.pendingRequests.remove(cacheKey);
+            if (data != null && data.length > 0 && ex == null) {
+                this.memoryCache.put(cacheKey, data);
+                if (this.plugin.getConfig().isUseDiskCache()) {
+                    this.diskCache.put(worldName, zoom, tileX, tileZ, data);
+                }
+            }
+        });
+        return future;
+    }
+
+    /**
+     * Get a base tile (zoom level 0) for a single chunk.
+     * This is called by the composite tile generator.
+     */
+    public CompletableFuture<byte[]> getBaseTile(String worldName, int tileX, int tileZ) {
+        String cacheKey = TileCache.createKey(worldName, 0, tileX, tileZ);
 
         // 1. Check memory cache first (fastest)
         byte[] memoryCached = this.memoryCache.get(cacheKey);
@@ -46,9 +123,9 @@ public class TileManager {
 
         // 3. Check disk cache if enabled
         if (this.plugin.getConfig().isUseDiskCache()) {
-            byte[] diskCached = this.diskCache.get(worldName, zoom, tileX, tileZ);
+            byte[] diskCached = this.diskCache.get(worldName, 0, tileX, tileZ);
             if (diskCached != null) {
-                long tileAge = this.diskCache.getTileAge(worldName, zoom, tileX, tileZ);
+                long tileAge = this.diskCache.getTileAge(worldName, 0, tileX, tileZ);
                 long refreshInterval = this.plugin.getConfig().getTileRefreshIntervalMs();
 
                 // If tile is fresh enough, serve from disk
@@ -70,14 +147,14 @@ public class TileManager {
         }
 
         // 4. Generate new tile
-        CompletableFuture<byte[]> future = this.generateTile(worldName, zoom, tileX, tileZ);
+        CompletableFuture<byte[]> future = this.generateTile(worldName, 0, tileX, tileZ);
         this.pendingRequests.put(cacheKey, future);
         future.whenComplete((data, ex) -> {
             this.pendingRequests.remove(cacheKey);
             if (data != null && data.length > 0 && ex == null) {
                 this.memoryCache.put(cacheKey, data);
                 if (this.plugin.getConfig().isUseDiskCache()) {
-                    this.diskCache.put(worldName, zoom, tileX, tileZ, data);
+                    this.diskCache.put(worldName, 0, tileX, tileZ, data);
                 }
             }
         });
@@ -100,6 +177,35 @@ public class TileManager {
                 int dz = Math.abs(playerChunkZ - tileZ);
 
                 if (dx <= radius && dz <= radius) {
+                    return true;
+                }
+            } catch (Exception e) {
+                // Skip this player
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Check if any players are within the area covered by a composite tile.
+     */
+    private boolean arePlayersInArea(World world, int baseChunkX, int baseChunkZ, int chunksPerAxis) {
+        int radius = this.plugin.getConfig().getTileRefreshRadius();
+
+        for (PlayerRef playerRef : world.getPlayerRefs()) {
+            try {
+                Transform transform = playerRef.getTransform();
+                if (transform == null) continue;
+
+                Vector3d pos = transform.getPosition();
+                int playerChunkX = ChunkUtil.chunkCoordinate((int) pos.x);
+                int playerChunkZ = ChunkUtil.chunkCoordinate((int) pos.z);
+
+                // Check if player is within the area (with buffer for refresh radius)
+                if (playerChunkX >= baseChunkX - radius &&
+                    playerChunkX < baseChunkX + chunksPerAxis + radius &&
+                    playerChunkZ >= baseChunkZ - radius &&
+                    playerChunkZ < baseChunkZ + chunksPerAxis + radius) {
                     return true;
                 }
             } catch (Exception e) {
